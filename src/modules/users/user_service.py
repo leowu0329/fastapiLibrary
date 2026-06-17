@@ -14,15 +14,26 @@ class UserService:
         if existing:
             raise HTTPException(status_code=400, detail="此 Email 已被註冊")
         
-        hashed_password = pwd_context.hash(user_in.password)
+        # 1. 轉成標準字典
         user_data = user_in.model_dump()
+        
+        # 2. 強制轉為純文字字串，防止任何物件型態干擾
+        raw_password = str(user_in.password)
+        
+        # 防禦性檢查：印出長度以便在 Uvicorn 終端機除錯 (正式上線可刪除)
+        print(f"--- [DEBUG] 準備加密的密碼長度: {len(raw_password)} 碼 ---")
+        
+        # 3. 進行雜湊
+        hashed_password = pwd_context.hash(raw_password)
+        
+        # 4. 寫回字典
         user_data["password"] = hashed_password
         
         return await self.repo.create_user(user_data)
 
     async def authenticate_user(self, login_in) -> dict:
         user = await self.repo.get_user_by_email(login_in.email)
-        if not user or not pwd_context.verify(login_in.password, user["password"]):
+        if not user or not pwd_context.verify(str(login_in.password), user["password"]):
             raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
         
         token_data = {"sub": user["email"], "user_id": user["_id"], "role": user["role"]}

@@ -12,6 +12,7 @@ def get_user_service(db=Depends(get_database)):
 
 @router.post("/register", response_model=UserResponse, status_code=201)
 async def register(user_in: UserCreate, service: UserService = Depends(get_user_service)):
+    # 確保是把整個 pydantic 模型物件 (user_in) 傳進去，而不是傳成字串
     return await service.register_user(user_in)
 
 @router.post("/login")

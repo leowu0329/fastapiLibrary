@@ -7,3 +7,7 @@
 1. 複製環境變數設定：
    ```bash
    cp .env.example .env
+
+1. 執行：
+   ```bash
+   uvicorn main:app --reload

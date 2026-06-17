@@ -1,6 +1,6 @@
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
-from typing import List, Optional
+from typing import Optional, List
 from datetime import datetime
 
 class CirculationRepository:
@@ -12,17 +12,56 @@ class CirculationRepository:
     async def count_active_loans(self, user_id: str) -> int:
         return await self.loans.count_documents({"user_id": user_id, "status": "active"})
 
+    async def find_active_loans_by_user(self, user_id: str) -> List[dict]:
+        pipeline = [
+            {"$match": {"user_id": user_id, "status": "active"}},
+            {"$addFields": {"book_obj_id": {"$toObjectId": "$book_id"}}},
+            {
+                "$lookup": {
+                    "from": "books",
+                    "localField": "book_obj_id",
+                    "foreignField": "_id",
+                    "as": "book_detail"
+                }
+            },
+            {"$unwind": "$book_detail"},
+            {
+                "$project": {
+                    "id": {"$toString": "$_id"},
+                    "book_id": 1,
+                    "borrow_date": 1,
+                    "due_date": 1,
+                    "status": 1,
+                    "book_title": "$book_detail.title",
+                    "book_author": "$book_detail.author",
+                    "book_category": "$book_detail.category"
+                }
+            }
+        ]
+        
+        cursor = self.loans.aggregate(pipeline)
+        results = []
+        async for doc in cursor:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            if "id" not in doc and "_id" in doc:
+                doc["id"] = doc["_id"]
+                
+            if isinstance(doc.get("borrow_date"), datetime):
+                doc["borrow_date"] = doc["borrow_date"].isoformat()
+            if isinstance(doc.get("due_date"), datetime):
+                doc["due_date"] = doc["due_date"].isoformat()
+            results.append(doc)
+        return results
+
     async def execute_borrow_transaction(self, user_id: str, book_id: str, borrow_date: datetime, due_date: datetime) -> Optional[dict]:
-        # 因應 MongoDB Cloud 分散式架構環境，此處採用樂觀鎖/原子化操作確保並行環境下的數據一致性
-        # 步驟一：嘗試扣減庫存 (條件為庫存必須大於 0)
         updated_book = await self.books.find_one_and_update(
             {"_id": ObjectId(book_id), "stock": {"$gt": 0}},
             {"$inc": {"stock": -1}}
         )
         if not updated_book:
-            return None # 庫存不足或書籍不存在
+            return None 
 
-        # 步驟二：建立借閱歷史明細紀錄
         loan_doc = {
             "user_id": user_id,
             "book_id": book_id,
@@ -33,6 +72,7 @@ class CirculationRepository:
         }
         result = await self.loans.insert_one(loan_doc)
         loan_doc["_id"] = str(result.inserted_id)
+        loan_doc["id"] = loan_doc["_id"]
         return loan_doc
 
     async def find_active_loan(self, loan_id: str) -> Optional[dict]:
@@ -41,10 +81,10 @@ class CirculationRepository:
         loan = await self.loans.find_one({"_id": ObjectId(loan_id), "status": "active"})
         if loan:
             loan["_id"] = str(loan["_id"])
+            loan["id"] = loan["_id"]
         return loan
 
     async def execute_return_transaction(self, loan_id: str, book_id: str, return_date: datetime) -> bool:
-        # 歸還原子操作：更新紀錄狀態並歸還圖書庫存量
         loan_update = await self.loans.update_one(
             {"_id": ObjectId(loan_id)},
             {"$set": {"status": "returned", "return_date": return_date}}

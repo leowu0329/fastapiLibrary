@@ -5,15 +5,17 @@ from fastapi import HTTPException
 class CirculationService:
     def __init__(self, repository: CirculationRepository):
         self.repo = repository
-        self.borrow_limit = 5 # 讀者借閱數量限制上限
+        self.borrow_limit = 5
+
+    # 核心新增：獲取用戶未還書清單
+    async def get_user_active_loans(self, user_id: str) -> list:
+        return await self.repo.find_active_loans_by_user(user_id)
 
     async def process_borrow(self, user_id: str, book_id: str) -> dict:
-        # 1. 檢查讀者未歸還之借閱上限
         active_count = await self.repo.count_active_loans(user_id)
         if active_count >= self.borrow_limit:
             raise HTTPException(status_code=400, detail=f"已達借閱上限（最高 {self.borrow_limit} 本），請先歸還舊書")
 
-        # 2. 進行扣減庫存與建立紀錄的整合封裝操作
         borrow_date = DateHelper.get_current_time()
         due_date = DateHelper.calculate_due_date(days=14)
         
